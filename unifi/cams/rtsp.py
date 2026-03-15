@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ class RTSPCam(UnifiCamBase):
         self.snapshot_stream = None
         self.runner = None
         self.stream_source = dict()
+        self.stream_dimensions = dict()
         for i, stream_index in enumerate(["video1", "video2", "video3"]):
             if not i < len(self.args.source):
                 i = -1
@@ -106,3 +108,54 @@ class RTSPCam(UnifiCamBase):
 
     async def get_stream_source(self, stream_index: str) -> str:
         return self.stream_source[stream_index]
+
+    def get_stream_dimensions(self, stream_index: str) -> dict[str, int]:
+        if stream_index == "mjpg":
+            stream_index = "video1"
+
+        if stream_index not in self.stream_dimensions:
+            self.stream_dimensions[stream_index] = self.probe_stream_dimensions(
+                stream_index, self.stream_source[stream_index]
+            )
+
+        return self.stream_dimensions[stream_index]
+
+    def probe_stream_dimensions(
+        self, stream_index: str, source: str
+    ) -> dict[str, int]:
+        try:
+            output = subprocess.check_output(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-rtsp_transport",
+                    self.args.rtsp_transport,
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "json",
+                    source,
+                ]
+            )
+            payload = json.loads(output)
+            stream = payload["streams"][0]
+            return {
+                "width": int(stream["width"]),
+                "height": int(stream["height"]),
+            }
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            IndexError,
+            KeyError,
+            ValueError,
+        ):
+            self.logger.warning(
+                "Could not determine stream dimensions for %s, using defaults",
+                stream_index,
+            )
+            return super().get_stream_dimensions(stream_index)

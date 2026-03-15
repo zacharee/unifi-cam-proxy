@@ -40,6 +40,11 @@ class UnifiCamBase(metaclass=ABCMeta):
         self._motion_event_ts: Optional[float] = None
         self._motion_object_type: Optional[SmartDetectObjectType] = None
         self._ffmpeg_handles: dict[str, subprocess.Popen] = {}
+        self._rtsp_aliases: dict[str, Optional[str]] = {
+            "video1": None,
+            "video2": None,
+            "video3": None,
+        }
 
         # Set up ssl context for requests
         self._ssl_context = ssl.create_default_context()
@@ -123,11 +128,28 @@ class UnifiCamBase(metaclass=ABCMeta):
     def get_extra_ffmpeg_args(self, stream_index: str = "") -> str:
         return self.args.ffmpeg_args
 
+    def get_rtsp_alias(self, stream_index: str) -> Optional[str]:
+        return self._rtsp_aliases[stream_index]
+
+    def get_stream_dimensions(self, stream_index: str) -> dict[str, int]:
+        defaults = {
+            "mjpg": {"width": 1280, "height": 720},
+            "video1": {"width": 1920, "height": 1080},
+            "video2": {"width": 1280, "height": 720},
+            "video3": {"width": 640, "height": 360},
+        }
+        return defaults[stream_index]
+
     async def get_feature_flags(self) -> dict[str, Any]:
         return {
             "mic": True,
             "aec": [],
+            "audioCodecs": ["aac"],
+            "streamEncryptable": True,
+            "supportFullHdSnapshot": True,
+            "supportMinMotionAdaptiveBitrate": True,
             "videoMode": ["default"],
+            "videoCodecs": ["h264", "mjpg"],
             "motionDetect": ["enhanced"],
         }
 
@@ -263,12 +285,15 @@ class UnifiCamBase(metaclass=ABCMeta):
                     "idleTime": 191.96,
                     "ip": self.args.ip,
                     "mac": self.args.mac,
+                    "marketName": self.args.model,
                     "model": self.args.model,
                     "name": self.args.name,
+                    "platform": "s5l",
                     "protocolVersion": 67,
                     "rebootTimeoutSec": 30,
                     "semver": "v4.4.8",
                     "totalLoad": 0.5474,
+                    "type": self.args.model,
                     "upgradeTimeoutSec": 150,
                     "uptime": int(self.get_uptime()),
                     "features": await self.get_feature_flags(),
@@ -357,6 +382,10 @@ class UnifiCamBase(metaclass=ABCMeta):
         )
 
     async def process_video_settings(self, msg: AVClientRequest) -> AVClientResponse:
+        dimensions = {
+            stream_index: self.get_stream_dimensions(stream_index)
+            for stream_index in ["mjpg", "video1", "video2", "video3"]
+        }
         vid_dst = {
             "video1": ["file:///dev/null"],
             "video2": ["file:///dev/null"],
@@ -366,6 +395,8 @@ class UnifiCamBase(metaclass=ABCMeta):
         if msg["payload"] is not None and "video" in msg["payload"]:
             for k, v in msg["payload"]["video"].items():
                 if v:
+                    if "rtspAlias" in v:
+                        self._rtsp_aliases[k] = v["rtspAlias"]
                     if "avSerializer" in v:
                         vid_dst[k] = v["avSerializer"]["destinations"]
                         if "/dev/null" in vid_dst[k]:
@@ -427,7 +458,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "description": "JPEG pictures",
                         "enabled": True,
                         "fps": 5,
-                        "height": 720,
+                        "height": dimensions["mjpg"]["height"],
                         "isCbr": False,
                         "maxFps": 5,
                         "minClientAdaptiveBitRate": 0,
@@ -441,7 +472,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "type": "mjpg",
                         "validBitrateRangeMax": 6000000,
                         "validBitrateRangeMin": 32000,
-                        "width": 1280,
+                        "width": dimensions["mjpg"]["width"],
                     },
                     "video1": {
                         "M": 1,
@@ -468,14 +499,18 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "enabled": True,
                         "fps": 15,
                         "gopModel": 0,
-                        "height": 1080,
+                        "height": dimensions["video1"]["height"],
                         "horizontalFlip": False,
                         "isCbr": False,
+                        "isInternalRtspEnabled": False,
+                        "isRtspEnabled": self._rtsp_aliases["video1"] is not None,
+                        "internalRtspAlias": None,
                         "maxFps": 30,
                         "minClientAdaptiveBitRate": 0,
                         "minMotionAdaptiveBitRate": 0,
                         "nMultiplier": 6,
                         "name": "video1",
+                        "rtspAlias": self._rtsp_aliases["video1"],
                         "sourceId": 0,
                         "streamId": 1,
                         "streamOrdinal": 0,
@@ -502,7 +537,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                             30,
                         ],
                         "verticalFlip": False,
-                        "width": 1920,
+                        "width": dimensions["video1"]["width"],
                     },
                     "video2": {
                         "M": 1,
@@ -530,14 +565,18 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "enabled": True,
                         "fps": 15,
                         "gopModel": 0,
-                        "height": 720,
+                        "height": dimensions["video2"]["height"],
                         "horizontalFlip": False,
                         "isCbr": False,
+                        "isInternalRtspEnabled": False,
+                        "isRtspEnabled": self._rtsp_aliases["video2"] is not None,
+                        "internalRtspAlias": None,
                         "maxFps": 30,
                         "minClientAdaptiveBitRate": 0,
                         "minMotionAdaptiveBitRate": 0,
                         "nMultiplier": 6,
                         "name": "video2",
+                        "rtspAlias": self._rtsp_aliases["video2"],
                         "sourceId": 1,
                         "streamId": 2,
                         "streamOrdinal": 1,
@@ -564,7 +603,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                             30,
                         ],
                         "verticalFlip": False,
-                        "width": 1280,
+                        "width": dimensions["video2"]["width"],
                     },
                     "video3": {
                         "M": 1,
@@ -592,14 +631,18 @@ class UnifiCamBase(metaclass=ABCMeta):
                         "enabled": True,
                         "fps": 15,
                         "gopModel": 0,
-                        "height": 360,
+                        "height": dimensions["video3"]["height"],
                         "horizontalFlip": False,
                         "isCbr": False,
+                        "isInternalRtspEnabled": False,
+                        "isRtspEnabled": self._rtsp_aliases["video3"] is not None,
+                        "internalRtspAlias": None,
                         "maxFps": 30,
                         "minClientAdaptiveBitRate": 0,
                         "minMotionAdaptiveBitRate": 0,
                         "nMultiplier": 6,
                         "name": "video3",
+                        "rtspAlias": self._rtsp_aliases["video3"],
                         "sourceId": 2,
                         "streamId": 4,
                         "streamOrdinal": 2,
@@ -626,7 +669,7 @@ class UnifiCamBase(metaclass=ABCMeta):
                             30,
                         ],
                         "verticalFlip": False,
-                        "width": 640,
+                        "width": dimensions["video3"]["width"],
                     },
                     "vinFps": 30,
                 },
